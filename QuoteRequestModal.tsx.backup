@@ -1,0 +1,1367 @@
+import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { X, ArrowLeft, ArrowRight, Plus, Minus, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
+import { toast } from 'react-hot-toast';
+import { supabase } from '../lib/supabase';
+import { useTranslation } from '../contexts/LanguageContext';
+
+interface QuoteRequestModalProps {
+  isOpen: boolean;
+  onClose: (hasProgress: boolean, formData: any) => void;
+  savedFormData?: any;
+  services: Service[];
+}
+
+interface Service {
+  id: string;
+  type: string;
+  name: string;
+  description: string | null;
+  icon: string;
+  icon_type: 'emoji' | 'image' | 'lucide';
+  icon_image_url?: string;
+  price_type: string;
+  base_price: number;
+  active: boolean;
+  display_order: number;
+  service_config?: any;
+  pricing_rules?: any;
+}
+
+interface Promotion {
+  id: string;
+  title: string;
+  description: string | null;
+  service_type: string;
+  original_price: number;
+  discounted_price: number;
+  discount_percentage?: number;
+  start_date: string;
+  end_date: string;
+  active: boolean;
+  image_url: string | null;
+  display_type: 'section' | 'service';
+  display_order: number;
+  promotion_type: 'single' | 'bundle';
+  show_on_homepage?: boolean;
+  bundle_rules?: {
+    if_service: string;
+    if_quantity?: number;
+    then_service: string;
+    then_discount: number;
+  };
+}
+
+interface Subservice {
+  id: string;
+  parent_service_type: string;
+  subservice_key: string;
+  name: string;
+  description: string | null;
+  icon: string;
+  icon_type: 'emoji' | 'image' | 'lucide';
+  icon_image_url?: string;
+  price_type: string;
+  base_price: number;
+  active: boolean;
+  display_order: number;
+  service_config?: any;
+  pricing_rules?: any;
+}
+
+interface ServiceExtra {
+  id: string;
+  service_type: string;
+  subservice_key?: string;
+  extra_key: string;
+  extra_name: string;
+  extra_description?: string;
+  extra_price: number;
+  is_conditional: boolean;
+  condition_key?: string;
+  condition_value?: string;
+  display_order: number;
+  active: boolean;
+  has_quantity?: boolean;
+}
+
+interface QuoteItem {
+  id: string;
+  type: string;
+  subservice?: string;
+  quantity?: number;
+  specifications: { [key: string]: any };
+  extras: string[];
+  extraQuantities?: { [key: string]: number };
+  price: number;
+}
+
+const QuoteRequestModal: React.FC<QuoteRequestModalProps> = ({
+  isOpen,
+  onClose,
+  savedFormData,
+  services
+}) => {
+  const { t } = useTranslation();
+  const [currentStep, setCurrentStep] = useState(1);
+  const [items, setItems] = useState<QuoteItem[]>([]);
+  const [subservices, setSubservices] = useState<Subservice[]>([]);
+  const [serviceExtras, setServiceExtras] = useState<ServiceExtra[]>([]);
+  const [selectedService, setSelectedService] = useState<Service | null>(null);
+  const [selectedSubservice, setSelectedSubservice] = useState<Subservice | null>(null);
+  const [currentItems, setCurrentItems] = useState<Partial<QuoteItem>[]>([]);
+  const [activeItemIndex, setActiveItemIndex] = useState(0);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [promotions, setPromotions] = useState<Promotion[]>([]);
+  const [isInitialized, setIsInitialized] = useState(false);
+  
+  const fetchPromotions = async () => {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      
+      const { data, error } = await supabase
+        .from('promotions')
+        .select('*')
+        .eq('active', true)
+        .lte('start_date', today)
+        .gte('end_date', today);
+
+      if (error) {
+        console.error('Error fetching promotions:', error);
+        return;
+      }
+
+      console.log('📊 Fetched promotions for modal:', data);
+      setPromotions(data || []);
+    } catch (error) {
+      console.error('Error fetching promotions:', error);
+    }
+  };
+
+  // Form data
+  const [formData, setFormData] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    address: '',
+    service_type: 'residential',
+    additional_info: '',
+    preferred_date: ''
+  });
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchSubservices();
+      fetchServiceExtras();
+      fetchPromotions();
+      
+      if (savedFormData && !isInitialized) {
+        console.log('🔄 Restaurando dados salvos:', savedFormData);
+        if (savedFormData.name) setFormData(savedFormData);
+        if (savedFormData.items) setItems(savedFormData.items);
+        if (savedFormData.currentStep && savedFormData.currentStep > 1) {
+          setCurrentStep(savedFormData.currentStep);
+        }
+        if (savedFormData.selectedService) setSelectedService(savedFormData.selectedService);
+        if (savedFormData.selectedSubservice) setSelectedSubservice(savedFormData.selectedSubservice);
+        if (savedFormData.currentItems) setCurrentItems(savedFormData.currentItems);
+        setIsInitialized(true);
+      }
+    } else {
+      setIsInitialized(false);
+    }
+  }, [isOpen, savedFormData, isInitialized]);
+
+  const fetchSubservices = async () => {
+    try {
+      // Verificar se o cliente Supabase está configurado
+      if (!supabase) {
+        console.warn('Supabase client not configured');
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('subservices')
+        .select('*')
+        .eq('active', true)
+        .order('display_order', { ascending: true });
+
+      if (error) {
+        // Se a tabela não existe, não é um erro crítico
+        if (error.code === 'PGRST116' || error.message.includes('relation "public.subservices" does not exist')) {
+          console.warn('Subservices table does not exist yet. This is normal if migrations haven\'t been run.');
+          setSubservices([]);
+          return;
+        }
+        throw error;
+      }
+      
+      setSubservices(data || []);
+    } catch (error) {
+      console.error('Error fetching subservices:', error);
+      // Não falhar silenciosamente, mas continuar com array vazio
+      setSubservices([]);
+    }
+  };
+
+  const fetchServiceExtras = async () => {
+    try {
+      // Verificar se o cliente Supabase está configurado
+      if (!supabase) {
+        console.warn('Supabase client not configured');
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('service_extras')
+        .select('*')
+        .eq('active', true)
+        .order('display_order', { ascending: true });
+
+      if (error) {
+        // Se a tabela não existe, não é um erro crítico
+        if (error.code === 'PGRST116' || error.message.includes('relation "public.service_extras" does not exist')) {
+          console.warn('Service extras table does not exist yet. This is normal if migrations haven\'t been run.');
+          setServiceExtras([]);
+          return;
+        }
+        throw error;
+      }
+      
+      setServiceExtras(data || []);
+    } catch (error) {
+      console.error('Error fetching service extras:', error);
+      // Não falhar silenciosamente, mas continuar com array vazio
+      setServiceExtras([]);
+    }
+  };
+
+  const calculateItemPrice = (item: Partial<QuoteItem>, service?: Service, subservice?: Subservice) => {
+    const serviceToUse = subservice || service;
+    if (!serviceToUse || !item.quantity) return 0;
+
+    let basePrice = serviceToUse.base_price;
+    const pricingRules = serviceToUse.pricing_rules;
+
+    // Calcular preço base baseado no tipo
+    switch (serviceToUse.price_type) {
+      case 'fixed':
+        basePrice = serviceToUse.base_price;
+        break;
+      case 'per_seat':
+        basePrice = serviceToUse.base_price * (item.specifications?.seats || item.quantity);
+        break;
+      case 'per_sqm':
+        const width = parseFloat(item.specifications?.width || '0');
+        const height = parseFloat(item.specifications?.height || '0');
+        basePrice = serviceToUse.base_price * (width * height || 1);
+        break;
+      case 'per_item':
+        basePrice = serviceToUse.base_price * item.quantity;
+        break;
+      default:
+        basePrice = serviceToUse.base_price;
+    }
+
+    // Adicionar preço dos extras
+    let extrasPrice = 0;
+    if (item.extras) {
+      item.extras.forEach(extraKey => {
+        const extra = serviceExtras.find(e => 
+          e.service_type === (subservice?.parent_service_type || service?.type) &&
+          e.extra_key === extraKey &&
+          (!subservice || e.subservice_key === subservice.subservice_key)
+        );
+        if (extra) {
+          const quantity = item.extraQuantities?.[extraKey] || 1;
+          extrasPrice += extra.extra_price * quantity;
+        }
+      });
+    }
+
+    return basePrice + extrasPrice;
+  };
+
+  const handleServiceSelect = (service: Service) => {
+    setSelectedService(service);
+    setSelectedSubservice(null);
+    
+    // Se for "outros", mostrar subserviços
+    if (service.type === 'outros') {
+      return; // Não avançar para configuração ainda
+    }
+    
+    // Para outros serviços, inicializar item
+    setCurrentItems([{
+      id: Date.now().toString(),
+      type: service.type,
+      quantity: service?.service_config?.has_quantity !== false ? 1 : undefined,
+      specifications: {},
+      extras: [],
+      extraQuantities: {},
+      price: 0
+    }]);
+    setActiveItemIndex(0);
+    setCurrentStep(2);
+  };
+
+  const handleSubserviceSelect = (subservice: Subservice) => {
+    setSelectedSubservice(subservice);
+    setCurrentItems([{
+      id: Date.now().toString(),
+      type: subservice.parent_service_type,
+      subservice: subservice.subservice_key,
+      quantity: subservice.service_config?.has_quantity !== false ? 1 : undefined,
+      specifications: {},
+      extras: [],
+      extraQuantities: {},
+      price: 0
+    }]);
+    setActiveItemIndex(0);
+    setCurrentStep(2);
+  };
+
+  const handleQuantityChange = (change: number, itemIndex: number) => {
+    const currentItem = currentItems[itemIndex];
+    const newQuantity = Math.max(1, (currentItem?.quantity || 1) + change);
+    const maxQuantity = selectedSubservice?.pricing_rules?.max_quantity || 
+                       selectedService?.pricing_rules?.max_quantity || 10;
+    
+    if (newQuantity <= maxQuantity) {
+      setCurrentItems(prev => prev.map((item, index) => 
+        index === itemIndex ? { ...item, quantity: newQuantity } : item
+      ));
+    }
+  };
+
+  const handleSpecificationChange = (key: string, value: any, itemIndex: number) => {
+    setCurrentItems(prev => prev.map((item, index) => 
+      index === itemIndex ? {
+        ...item,
+        specifications: { ...item.specifications, [key]: value }
+      } : item
+    ));
+  };
+
+  const handleExtraToggle = (extraKey: string, itemIndex: number) => {
+    setCurrentItems(prev => prev.map((item, index) => {
+      if (index !== itemIndex) return item;
+      
+      const extras = item.extras || [];
+      const newExtras = extras.includes(extraKey)
+        ? extras.filter(e => e !== extraKey)
+        : [...extras, extraKey];
+      return { ...item, extras: newExtras };
+    }));
+  };
+
+  const addItemsToQuote = () => {
+    if (currentItems.length === 0) return;
+
+    const newItems: QuoteItem[] = currentItems.map(item => ({
+      ...item as QuoteItem,
+      price: calculateItemPrice(item, selectedService, selectedSubservice)
+    }));
+
+    setItems(prev => [...prev, ...newItems]);
+    
+    const serviceToUse = selectedSubservice || selectedService;
+    toast.success(`${newItems.length} ${serviceToUse?.name}${newItems.length > 1 ? 's' : ''} adicionado${newItems.length > 1 ? 's' : ''} ao orçamento!`);
+    setCurrentStep(3);
+    
+    // Reset selections
+    setSelectedService(null);
+    setSelectedSubservice(null);
+    setCurrentItems([]);
+    setActiveItemIndex(0);
+  };
+
+  const addAnotherItem = () => {
+    const serviceToUse = selectedSubservice || selectedService;
+    if (!serviceToUse) return;
+
+    // Replicar configurações do item atual (não vazio)
+    const currentItem = currentItems[activeItemIndex] || {};
+    const newItem = {
+      id: Date.now().toString(),
+      type: selectedSubservice?.parent_service_type || selectedService?.type || '',
+      subservice: selectedSubservice?.subservice_key,
+      quantity: serviceToUse.service_config?.has_quantity !== false ? 1 : undefined,
+      specifications: { ...currentItem.specifications },
+      extras: [...(currentItem.extras || [])],
+      extraQuantities: { ...(currentItem.extraQuantities || {}) },
+      price: 0
+    };
+    
+    setCurrentItems(prev => [...prev, newItem]);
+    setActiveItemIndex(currentItems.length);
+    toast.success(`Novo ${serviceToUse.name} criado para configurar!`);
+  };
+
+  const removeCurrentItem = (itemIndex: number) => {
+    if (currentItems.length <= 1) {
+      toast.error('Deve ter pelo menos um item para configurar');
+      return;
+    }
+    
+    setCurrentItems(prev => prev.filter((_, index) => index !== itemIndex));
+    
+    // Ajustar activeItemIndex se necessário
+    if (activeItemIndex >= currentItems.length - 1) {
+      setActiveItemIndex(Math.max(0, currentItems.length - 2));
+    }
+    
+    const serviceToUse = selectedSubservice || selectedService;
+    toast.success(`${serviceToUse?.name} removido!`);
+  };
+
+  const removeItem = (itemId: string) => {
+    setItems(prev => prev.filter(item => item.id !== itemId));
+  };
+
+  const getTotalPrice = () => {
+    return items.reduce((total, item) => total + item.price, 0);
+  };
+
+  const handleSubmit = async () => {
+    if (!formData.name || !formData.email || !formData.phone || !formData.address) {
+      toast.error('Por favor, preencha todos os campos obrigatórios');
+      return;
+    }
+
+    if (items.length === 0) {
+      toast.error('Por favor, adicione pelo menos um item ao orçamento');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const { error } = await supabase
+        .from('quote_requests')
+        .insert([{
+          ...formData,
+          items: items,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }]);
+
+      if (error) throw error;
+
+      toast.success('🎉 Pedido de orçamento enviado com sucesso! Entraremos em contacto brevemente.', {
+        duration: 5000,
+        style: {
+          background: '#10B981',
+          color: 'white',
+          fontWeight: 'bold',
+          padding: '16px',
+          borderRadius: '8px'
+        }
+      });
+      handleClose(false);
+    } catch (error) {
+      console.error('Error submitting quote:', error);
+      toast.error('❌ Erro ao enviar pedido. Tente novamente.', {
+        duration: 4000,
+        style: {
+          background: '#EF4444',
+          color: 'white',
+          fontWeight: 'bold',
+          padding: '16px',
+          borderRadius: '8px'
+        }
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleClose = (hasProgress: boolean | null = null) => {
+    const progress = hasProgress === null
+      ? (items.length > 0 || Object.values(formData).some(v => v !== '' && v !== 'residential'))
+      : hasProgress;
+
+    const dataToSave = progress ? {
+      ...formData,
+      items,
+      currentStep,
+      selectedService,
+      selectedSubservice,
+      currentItems
+    } : null;
+
+    console.log('💾 Salvando progresso ao fechar:', dataToSave);
+    onClose(progress, dataToSave);
+
+    // Reset states
+    setCurrentStep(1);
+    setFormData({
+      name: '',
+      email: '',
+      phone: '',
+      address: '',
+      service_type: 'residential',
+      additional_info: '',
+      preferred_date: ''
+    });
+    setItems([]);
+    setSelectedService(null);
+    setSelectedSubservice(null);
+    setCurrentItems([]);
+    setActiveItemIndex(0);
+    setIsInitialized(false);
+  };
+
+  const getItemPromotion = (item: QuoteItem) => {
+    const serviceType = item.subservice ? 
+      subservices.find(s => s.subservice_key === item.subservice)?.parent_service_type || item.type :
+      item.type;
+    
+    return promotions.find(p => 
+      p.service_type === serviceType && 
+      p.promotion_type === 'single' && 
+      p.display_type === 'service'
+    );
+  };
+
+  const calculateOriginalPrice = (item: QuoteItem) => {
+    const service = services.find(s => s.type === item.type);
+    const subservice = subservices.find(s => s.subservice_key === item.subservice);
+    const serviceToUse = subservice || service;
+    
+    if (!serviceToUse || !item.quantity) return 0;
+
+    let basePrice = serviceToUse.base_price;
+
+    // Calcular preço base baseado no tipo
+    switch (serviceToUse.price_type) {
+      case 'fixed':
+        basePrice = serviceToUse.base_price;
+        break;
+      case 'per_seat':
+        basePrice = serviceToUse.base_price * (item.specifications?.seats || item.quantity);
+        break;
+      case 'per_sqm':
+        const width = parseFloat(item.specifications?.width || '0');
+        const height = parseFloat(item.specifications?.height || '0');
+        basePrice = serviceToUse.base_price * (width * height || 1);
+        break;
+      case 'per_item':
+        basePrice = serviceToUse.base_price * item.quantity;
+        break;
+      default:
+        basePrice = serviceToUse.base_price;
+    }
+
+    // Adicionar preço dos extras
+    let extrasPrice = 0;
+    if (item.extras) {
+      item.extras.forEach(extraKey => {
+        const extra = serviceExtras.find(e => 
+          e.service_type === (subservice?.parent_service_type || service?.type) &&
+          e.extra_key === extraKey &&
+          (!subservice || e.subservice_key === subservice.subservice_key)
+        );
+        if (extra) {
+          const quantity = item.extraQuantities?.[extraKey] || 1;
+          extrasPrice += extra.extra_price * quantity;
+        }
+      });
+    }
+
+    return basePrice + extrasPrice;
+  };
+
+  const renderServiceIcon = (service: Service | Subservice) => {
+    if (service.icon_type === 'image' && service.icon_image_url) {
+      return (
+        <img 
+          src={service.icon_image_url} 
+          alt={service.name}
+          className="w-12 h-12 object-contain"
+        />
+      );
+    }
+    return <div className="text-4xl">{service.icon}</div>;
+  };
+
+  const getAvailableExtras = () => {
+    const serviceType = selectedSubservice?.parent_service_type || selectedService?.type;
+    const subserviceKey = selectedSubservice?.subservice_key;
+    
+    return serviceExtras.filter(extra => 
+      extra.service_type === serviceType &&
+      (!subserviceKey || extra.subservice_key === subserviceKey)
+    );
+  };
+
+  const renderServiceSelection = () => (
+    <div className="space-y-6">
+      <div className="text-center mb-4">
+        <h3 className="text-2xl font-bold text-gray-900">Selecione os serviços</h3>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+        {services.filter(s => s.active).map((service) => (
+          <motion.button
+            key={service.id}
+            onClick={() => handleServiceSelect(service)}
+            className="p-6 bg-white border-2 border-gray-200 rounded-xl hover:border-[#deb052] hover:shadow-lg transition-all group"
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+          >
+            <div className="flex flex-col items-center text-center space-y-3">
+              <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center group-hover:bg-gray-100 transition-colors">
+                {renderServiceIcon(service)}
+              </div>
+              <div>
+                <h4 className="font-semibold text-gray-900">{service.name}</h4>
+                <p className="text-sm text-gray-600 mt-1">{service.description}</p>
+                <p className="text-[#deb052] font-bold mt-2">
+                  {service.price_type === 'fixed' ? `${service.base_price}€` : `A partir de ${service.base_price}€`}
+                </p>
+              </div>
+            </div>
+          </motion.button>
+        ))}
+      </div>
+
+      {/* Subserviços para "Outros" */}
+      {selectedService?.type === 'outros' && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mt-8 p-6 bg-gray-50 rounded-xl"
+        >
+          <h4 className="text-xl font-bold text-gray-900 mb-4">Escolha o tipo de serviço:</h4>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {subservices
+              .filter(sub => sub.parent_service_type === 'outros')
+              .map((subservice) => (
+                <motion.button
+                  key={subservice.id}
+                  onClick={() => handleSubserviceSelect(subservice)}
+                  className="p-4 bg-white border-2 border-gray-200 rounded-lg hover:border-[#deb052] hover:shadow-md transition-all group text-left"
+                  whileHover={{ scale: 1.01 }}
+                  whileTap={{ scale: 0.99 }}
+                >
+                  <div className="flex items-center space-x-4">
+                    <div className="w-12 h-12 bg-[#deb052]/10 rounded-lg flex items-center justify-center group-hover:bg-[#deb052]/20 transition-colors">
+                      {renderServiceIcon(subservice)}
+                    </div>
+                    <div className="flex-1">
+                      <h5 className="font-semibold text-gray-900">{subservice.name}</h5>
+                      <p className="text-sm text-gray-600">{subservice.description}</p>
+                      <p className="text-[#deb052] font-bold mt-1">
+                        {subservice.price_type === 'fixed' ? `${subservice.base_price}€` : `A partir de ${subservice.base_price}€`}
+                      </p>
+                    </div>
+                  </div>
+                </motion.button>
+              ))}
+          </div>
+        </motion.div>
+      )}
+    </div>
+  );
+
+  const renderServiceConfiguration = () => {
+    const serviceToUse = selectedSubservice || selectedService;
+    if (!serviceToUse) return null;
+
+    const config = serviceToUse.service_config || {};
+    const availableExtras = getAvailableExtras();
+    const currentItem = currentItems[activeItemIndex] || {};
+    const currentPrice = calculateItemPrice(currentItem, selectedService, selectedSubservice);
+    const isCarpetService = serviceToUse.type === 'tapete' || (selectedService?.type === 'tapete');
+    const totalPrice = currentItems.reduce((total, item) => calculateItemPrice(item, selectedService, selectedSubservice), 0);
+
+    return (
+      <div className="space-y-6">
+        <div className="flex justify-between items-start mb-6">
+          <div>
+            <h3 className="text-2xl font-bold text-gray-900 mb-2">
+              Configurar: {serviceToUse.name}
+            </h3>
+            <p className="text-gray-600">{serviceToUse.description}</p>
+          </div>
+          
+          {/* Botão Adicionar Outro - Só aparece se configurado pelo admin */}
+          {(config.quantity_control_type === 'button' || config.quantity_control_type === 'both') && (
+            <button
+              onClick={addAnotherItem}
+              className="bg-[#deb052] text-white px-4 py-2 rounded-lg font-medium hover:bg-[#c99a3f] transition-colors flex items-center gap-2 whitespace-nowrap"
+            >
+              <Plus size={16} />
+              Adicionar Outro {serviceToUse.name}
+            </button>
+          )}
+        </div>
+
+        {/* Navegação entre itens se houver múltiplos */}
+        {currentItems.length > 1 && (
+          <div className="flex items-center justify-between bg-gray-50 p-4 rounded-lg">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setActiveItemIndex(Math.max(0, activeItemIndex - 1))}
+                disabled={activeItemIndex === 0}
+                className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <ChevronLeft size={16} />
+                Anterior
+              </button>
+              
+              <button
+                onClick={() => removeCurrentItem(activeItemIndex)}
+                className="px-3 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors flex items-center gap-2"
+                title="Remover este item"
+              >
+                <Trash2 size={16} />
+                Remover
+              </button>
+            </div>
+            
+            <div className="text-center">
+              <p className="font-semibold text-gray-900">
+                {serviceToUse.name} {activeItemIndex + 1} de {currentItems.length}
+              </p>
+              <p className="text-sm text-gray-600">
+                Preço deste item: <span className="font-bold text-[#deb052]">{currentPrice.toFixed(2)}€</span>
+              </p>
+            </div>
+            
+            <button
+              onClick={() => setActiveItemIndex(Math.min(currentItems.length - 1, activeItemIndex + 1))}
+              disabled={activeItemIndex === currentItems.length - 1}
+              className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Próximo
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        )}
+
+        {/* Controle de Quantidade (se aplicável) */}
+        {config.has_quantity !== false && (config.quantity_control_type === 'numeric' || config.quantity_control_type === 'both' || !config.quantity_control_type) && (
+          <div className="bg-white p-6 rounded-xl border border-gray-200">
+            <h4 className="text-lg font-semibold mb-4">Quantidade</h4>
+            <div className="flex items-center justify-center space-x-4">
+              <button
+                onClick={() => handleQuantityChange(-1, activeItemIndex)}
+                className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center hover:bg-gray-200 transition-colors"
+              >
+                <Minus size={16} />
+              </button>
+              <span className="text-2xl font-bold text-gray-900 min-w-[3rem] text-center">
+                {currentItem.quantity || 1}
+              </span>
+              <button
+                onClick={() => handleQuantityChange(1, activeItemIndex)}
+                className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center hover:bg-gray-200 transition-colors"
+              >
+                <Plus size={16} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Especificações */}
+        {config.specifications && config.specifications.length > 0 && (
+          <div className="bg-white p-6 rounded-xl border border-gray-200">
+            <h4 className="text-lg font-semibold mb-4">Especificações</h4>
+            
+            {/* Visualização do Tapete */}
+            {isCarpetService && (
+              <div className="mb-6 p-4 bg-gray-50 rounded-lg">
+                <h5 className="text-sm font-medium text-gray-700 mb-3 text-center">Visualização do Tapete</h5>
+                <div className="flex justify-center">
+                  <div className="relative">
+                    {/* Tapete */}
+                    <div 
+                      className="border-2 border-[#deb052] bg-gradient-to-br from-[#deb052]/20 to-[#deb052]/10 rounded-lg shadow-md"
+                      style={{
+                        width: Math.max(120, Math.min(200, (parseFloat(currentItem.specifications?.width || '2') * 40))),
+                        height: Math.max(80, Math.min(150, (parseFloat(currentItem.specifications?.height || '1.5') * 40)))
+                      }}
+                    >
+                      {/* Padrão do tapete */}
+                      <div className="absolute inset-2 border border-[#deb052]/30 rounded">
+                        <div className="w-full h-full bg-gradient-to-br from-transparent via-[#deb052]/10 to-transparent rounded"></div>
+                      </div>
+                    </div>
+                    
+                    {/* Medida da Largura (em cima) */}
+                    <div className="absolute -top-8 left-0 right-0 flex items-center justify-center">
+                      <div className="bg-white px-2 py-1 rounded shadow-sm border text-xs font-medium text-gray-700">
+                        {currentItem.specifications?.width || '0'}m
+                      </div>
+                      <div className="absolute left-0 right-0 top-1/2 h-px bg-gray-400"></div>
+                      <div className="absolute left-0 top-1/2 w-1 h-1 bg-gray-400 transform -translate-y-1/2"></div>
+                      <div className="absolute right-0 top-1/2 w-1 h-1 bg-gray-400 transform -translate-y-1/2"></div>
+                    </div>
+                    
+                    {/* Medida do Comprimento (do lado) */}
+                    <div className="absolute -right-8 top-0 bottom-0 flex items-center justify-center">
+                      <div className="bg-white px-2 py-1 rounded shadow-sm border text-xs font-medium text-gray-700 transform rotate-90">
+                        {currentItem.specifications?.height || '0'}m
+                      </div>
+                      <div className="absolute top-0 bottom-0 left-1/2 w-px bg-gray-400"></div>
+                      <div className="absolute top-0 left-1/2 w-1 h-1 bg-gray-400 transform -translate-x-1/2"></div>
+                      <div className="absolute bottom-0 left-1/2 w-1 h-1 bg-gray-400 transform -translate-x-1/2"></div>
+                    </div>
+                    
+                    {/* Área calculada no centro */}
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="bg-white/90 px-2 py-1 rounded shadow-sm text-xs font-bold text-[#deb052]">
+                        {((parseFloat(currentItem.specifications?.width || '0') * parseFloat(currentItem.specifications?.height || '0')) || 0).toFixed(1)}m²
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Legenda */}
+                <div className="mt-4 text-center">
+                  <p className="text-xs text-gray-600">
+                    <span className="font-medium">Largura:</span> {currentItem.specifications?.width || '0'}m × 
+                    <span className="font-medium"> Comprimento:</span> {currentItem.specifications?.height || '0'}m = 
+                    <span className="font-bold text-[#deb052]"> {((parseFloat(currentItem.specifications?.width || '0') * parseFloat(currentItem.specifications?.height || '0')) || 0).toFixed(1)}m²</span>
+                  </p>
+                </div>
+              </div>
+            )}
+            
+            <div className="space-y-4">
+              {config.specifications.map((spec: any) => (
+                <div key={spec.key}>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    {isCarpetService && spec.key === 'width' ? 'Largura (metros)' :
+                     isCarpetService && spec.key === 'height' ? 'Comprimento (metros)' :
+                     spec.name} {spec.required && <span className="text-red-500">*</span>}
+                  </label>
+                  
+                  {spec.type === 'number' && (
+                    <input
+                      type="number"
+                      value={currentItem.specifications?.[spec.key] || ''}
+                      onChange={(e) => handleSpecificationChange(spec.key, e.target.value, activeItemIndex)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#deb052] focus:border-[#deb052]"
+                      min={spec.min}
+                      max={spec.max}
+                      step={spec.step}
+                      placeholder={isCarpetService && spec.key === 'width' ? 'Ex: 2.5' :
+                                 isCarpetService && spec.key === 'height' ? 'Ex: 3.0' :
+                                 spec.placeholder}
+                    />
+                  )}
+                  
+                  {spec.type === 'radio' && (
+                    <div className="space-y-2">
+                      {spec.options.map((option: any) => (
+                        <label key={option.value} className="flex items-center">
+                          <input
+                            type="radio"
+                            name={spec.key}
+                            value={option.value}
+                            checked={currentItem.specifications?.[spec.key] === option.value}
+                            onChange={(e) => handleSpecificationChange(spec.key, e.target.value, activeItemIndex)}
+                            className="mr-2"
+                          />
+                          {option.label}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Extras */}
+        {availableExtras.length > 0 && (
+          <div className="bg-white p-6 rounded-xl border border-gray-200">
+            <h4 className="text-lg font-semibold mb-4">Extras Disponíveis</h4>
+            <div className="space-y-3">
+              {availableExtras.map((extra) => (
+                <div key={extra.extra_key} className="flex items-start gap-3 p-3 rounded-lg hover:bg-gray-50">
+                  <input
+                    type="checkbox"
+                    checked={currentItem.extras?.includes(extra.extra_key) || false}
+                    onChange={() => handleExtraToggle(extra.extra_key, activeItemIndex)}
+                    className="mt-1 rounded border-gray-300 text-[#deb052] focus:ring-[#deb052] cursor-pointer"
+                  />
+                  <div className="flex-1">
+                    <div className="font-medium text-gray-900">{extra.extra_name}</div>
+                    {extra.extra_description && (
+                      <div className="text-sm text-gray-500">{extra.extra_description}</div>
+                    )}
+                    <div className="text-sm font-medium text-[#deb052]">
+                      +{extra.extra_price}€
+                    </div>
+                  </div>
+                  {currentItem.extras?.includes(extra.extra_key) && extra.has_quantity && (
+                    <div className="flex items-center gap-2 ml-auto">
+                      <button
+                        onClick={() => {
+                          const newQuantities = { ...currentItem.extraQuantities };
+                          const currentQty = newQuantities[extra.extra_key] || 1;
+                          if (currentQty > 1) {
+                            newQuantities[extra.extra_key] = currentQty - 1;
+                            setCurrentItems(prev => prev.map((item, idx) => 
+                              idx === activeItemIndex ? { ...item, extraQuantities: newQuantities } : item
+                            ));
+                          }
+                        }}
+                        className="px-2 py-1 bg-gray-200 hover:bg-gray-300 rounded text-gray-700 font-semibold"
+                      >
+                        -
+                      </button>
+                      <input
+                        type="number"
+                        min="1"
+                        value={currentItem.extraQuantities?.[extra.extra_key] || 1}
+                        onChange={(e) => {
+                          const newQuantities = { ...currentItem.extraQuantities };
+                          const value = Math.max(1, parseInt(e.target.value) || 1);
+                          newQuantities[extra.extra_key] = value;
+                          setCurrentItems(prev => prev.map((item, idx) => 
+                            idx === activeItemIndex ? { ...item, extraQuantities: newQuantities } : item
+                          ));
+                        }}
+                        className="w-12 text-center border border-gray-300 rounded px-2 py-1"
+                      />
+                      <button
+                        onClick={() => {
+                          const newQuantities = { ...currentItem.extraQuantities };
+                          const currentQty = newQuantities[extra.extra_key] || 1;
+                          newQuantities[extra.extra_key] = currentQty + 1;
+                          setCurrentItems(prev => prev.map((item, idx) => 
+                            idx === activeItemIndex ? { ...item, extraQuantities: newQuantities } : item
+                          ));
+                        }}
+                        className="px-2 py-1 bg-gray-200 hover:bg-gray-300 rounded text-gray-700 font-semibold"
+                      >
+                        +
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Preço Total dos Itens Atuais */}
+        <div className="bg-[#deb052]/10 p-6 rounded-xl border border-[#deb052]/20">
+          <div className="flex justify-between items-center">
+            <span className="text-lg font-semibold">
+              Total ({currentItems.length} item{currentItems.length > 1 ? 's' : ''}):
+            </span>
+            <span className="text-2xl font-bold text-[#deb052]">
+              {totalPrice.toFixed(2)}€
+            </span>
+          </div>
+          <p className="text-sm text-gray-600 mt-2">
+            * Preço estimado baseado nas configurações atuais
+          </p>
+        </div>
+
+        {/* Botões de Ação */}
+        <div className="flex gap-4">
+          <button
+            onClick={() => setCurrentStep(1)}
+            className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-lg font-semibold hover:bg-gray-200 transition-colors flex items-center justify-center"
+          >
+            <ArrowLeft size={20} className="mr-2" />
+            Voltar
+          </button>
+          <button
+            onClick={addItemsToQuote}
+            className="flex-1 bg-[#deb052] text-white py-3 rounded-lg font-semibold hover:bg-[#c99a47] transition-colors"
+          >
+            Adicionar ao Orçamento
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderSummary = () => (
+    <div className="space-y-6">
+      <div className="text-center mb-6">
+        <h3 className="text-2xl font-bold text-gray-900 mb-2">Resumo do Orçamento</h3>
+        <p className="text-gray-600">Revise os serviços selecionados antes de continuar</p>
+      </div>
+
+      {items.length === 0 ? (
+        <div className="text-center py-12">
+          <div className="text-6xl mb-4">📋</div>
+          <h4 className="text-xl font-semibold text-gray-900 mb-2">Nenhum serviço adicionado</h4>
+          <p className="text-gray-600 mb-6">Adicione serviços ao seu orçamento para continuar</p>
+          <button
+            onClick={() => setCurrentStep(1)}
+            className="bg-[#deb052] text-white px-6 py-3 rounded-lg font-semibold hover:bg-[#c99a47] transition-colors"
+          >
+            Adicionar Serviços
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="space-y-4">
+            {items.map((item, index) => {
+              const service = services.find(s => s.type === item.type);
+              const subservice = subservices.find(s => s.subservice_key === item.subservice);
+              const serviceToShow = subservice || service;
+              
+              return (
+                <div key={item.id} className="bg-white p-6 rounded-xl border border-gray-200">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className="w-12 h-12 bg-[#deb052]/10 rounded-lg flex items-center justify-center">
+                          {serviceToShow && renderServiceIcon(serviceToShow)}
+                        </div>
+                        <div>
+                          <h4 className="font-semibold text-gray-900">{serviceToShow?.name}</h4>
+                          <p className="text-sm text-gray-600">{serviceToShow?.description}</p>
+                        </div>
+                      </div>
+                      
+                      {/* Quantidade */}
+                      {item.quantity && (
+                        <div className="mb-4">
+                          <h5 className="text-sm font-medium text-gray-700 mb-2">Quantidade:</h5>
+                          <p className="text-gray-900">{item.quantity}</p>
+                        </div>
+                      )}
+                      
+                      {/* Especificações */}
+                      {Object.keys(item.specifications).length > 0 && (
+                        <div className="mb-4">
+                          <h5 className="text-sm font-medium text-gray-700 mb-2">Especificações:</h5>
+                          <div className="space-y-1">
+                            {Object.entries(item.specifications).map(([key, value]) => (
+                              <p key={key} className="text-sm text-gray-600">
+                                <span className="font-medium">{key}:</span> {value}
+                              </p>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Extras selecionados */}
+                      {item.extras.length > 0 && (
+                        <div className="mt-4">
+                          <h5 className="text-sm font-medium text-gray-700 mb-2">Extras Selecionados:</h5>
+                          <div className="flex flex-wrap gap-2">
+                            {item.extras.map((extraKey) => {
+                              const extra = serviceExtras.find(e => e.extra_key === extraKey);
+                              return extra ? (
+                                <span key={extraKey} className="bg-[#deb052]/10 text-[#deb052] px-2 py-1 rounded-full text-xs">
+                                  {extra.extra_name} (+{extra.extra_price}€)
+                                </span>
+                              ) : null;
+                            })}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {getItemPromotion(item) && (
+                        <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+                          <p className="text-green-700 text-xs mt-1">
+                            🎉 Promoção aplicada: {getItemPromotion(item)?.title}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="flex flex-col items-end space-y-1">
+                      {getItemPromotion(item) ? (
+                        <>
+                          <span className="text-sm text-gray-500 line-through">
+                            {calculateOriginalPrice(item).toFixed(2)}€
+                          </span>
+                          <span className="text-lg font-bold text-green-600">
+                            {item.price.toFixed(2)}€
+                          </span>
+                          <span className="text-xs text-green-600 font-medium">
+                            Poupa {(calculateOriginalPrice(item) - item.price).toFixed(2)}€
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-lg font-bold text-[#deb052]">
+                          {item.price.toFixed(2)}€
+                        </span>
+                      )}
+                      <button
+                        onClick={() => removeItem(item.id)}
+                        className="text-red-500 hover:text-red-700"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="bg-[#deb052]/10 p-6 rounded-xl border border-[#deb052]/20">
+            {/* Mostrar poupança total se houver promoções */}
+            {items.some(item => getItemPromotion(item)) && (
+              <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+                <div className="text-center">
+                  <p className="text-green-800 font-bold text-lg mb-2">
+                    🎉 Parabéns! Está a poupar com as nossas promoções!
+                  </p>
+                  <div className="flex justify-center items-center gap-4">
+                    <div className="text-center">
+                      <p className="text-sm text-gray-600">Preço Original</p>
+                      <p className="text-lg text-gray-500 line-through">
+                        {items.reduce((total, item) => total + calculateOriginalPrice(item), 0).toFixed(2)}€
+                      </p>
+                    </div>
+                    <div className="text-2xl text-green-600">→</div>
+                    <div className="text-center">
+                      <p className="text-sm text-green-600">Preço Final</p>
+                      <p className="text-xl font-bold text-green-600">
+                        {getTotalPrice().toFixed(2)}€
+                      </p>
+                    </div>
+                  </div>
+                  <p className="text-green-600 font-bold mt-2">
+                    💰 Poupança Total: {(items.reduce((total, item) => total + calculateOriginalPrice(item), 0) - getTotalPrice()).toFixed(2)}€
+                  </p>
+                </div>
+              </div>
+            )}
+            
+            <div className="flex justify-between items-center">
+              <span className="text-xl font-semibold">Total Estimado:</span>
+              <span className={`text-3xl font-bold ${items.some(item => getItemPromotion(item)) ? 'text-green-600' : 'text-[#deb052]'}`}>
+                {getTotalPrice().toFixed(2)}€
+              </span>
+            </div>
+            <p className="text-sm text-gray-600 mt-2">
+              * Preço final pode variar após avaliação no local
+            </p>
+          </div>
+
+          <div className="flex gap-4">
+            <button
+              onClick={() => setCurrentStep(1)}
+              className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-lg font-semibold hover:bg-gray-200 transition-colors"
+            >
+              Adicionar Mais Serviços
+            </button>
+            <button
+              onClick={() => setCurrentStep(4)}
+              className="flex-1 bg-[#deb052] text-white py-3 rounded-lg font-semibold hover:bg-[#c99a47] transition-colors"
+            >
+              Continuar
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+
+  const renderContactForm = () => (
+    <div className="space-y-6">
+      <div className="text-center mb-6">
+        <h3 className="text-2xl font-bold text-gray-900 mb-2">Informações de Contacto</h3>
+        <p className="text-gray-600">Para podermos enviar o seu orçamento personalizado</p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Nome Completo *
+          </label>
+          <input
+            type="text"
+            value={formData.name}
+            onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#deb052]"
+            required
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Email *
+          </label>
+          <input
+            type="email"
+            value={formData.email}
+            onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#deb052]"
+            required
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Telefone *
+          </label>
+          <input
+            type="tel"
+            value={formData.phone}
+            onChange={(e) => setFormData(prev => ({ ...prev, phone: e.target.value }))}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#deb052]"
+            required
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Tipo de Cliente
+          </label>
+          <select
+            value={formData.service_type}
+            onChange={(e) => setFormData(prev => ({ ...prev, service_type: e.target.value }))}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#deb052]"
+          >
+            <option value="residential">Particular</option>
+            <option value="commercial">Empresa</option>
+          </select>
+        </div>
+
+        <div className="md:col-span-2">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Localidade *
+          </label>
+          <input
+            type="text"
+            value={formData.address}
+            onChange={(e) => setFormData(prev => ({ ...prev, address: e.target.value }))}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#deb052]"
+            placeholder="Ex: Lisboa, Porto, Covilhã"
+            required
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Data Preferida (Opcional)
+          </label>
+          <input
+            type="date"
+            value={formData.preferred_date}
+            onChange={(e) => setFormData(prev => ({ ...prev, preferred_date: e.target.value }))}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#deb052]"
+          />
+        </div>
+
+        <div className="md:col-span-2">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Informações Adicionais (Opcional)
+          </label>
+          <textarea
+            value={formData.additional_info}
+            onChange={(e) => setFormData(prev => ({ ...prev, additional_info: e.target.value }))}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#deb052]"
+            rows={3}
+            placeholder="Detalhes adicionais sobre o serviço..."
+          />
+        </div>
+      </div>
+
+      <div className="flex gap-4">
+        <button
+          onClick={() => setCurrentStep(3)}
+          className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-lg font-semibold hover:bg-gray-200 transition-colors flex items-center justify-center"
+        >
+          <ArrowLeft size={20} className="mr-2" />
+          Anterior
+        </button>
+        <button
+          onClick={handleSubmit}
+          disabled={isSubmitting}
+          className="flex-1 bg-[#deb052] text-white py-3 rounded-lg font-semibold hover:bg-[#c99a47] transition-colors disabled:opacity-50"
+        >
+          {isSubmitting ? 'Enviando...' : 'Enviar Pedido'}
+        </button>
+      </div>
+    </div>
+  );
+
+  if (!isOpen) return null;
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+        onClick={() => handleClose(true)}
+      >
+        <motion.div
+          initial={{ scale: 0.9, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          exit={{ scale: 0.9, opacity: 0 }}
+          className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div className="p-6 border-b border-gray-200 bg-gradient-to-r from-[#deb052] to-[#c99a47] text-white">
+            <div className="flex justify-between items-center">
+              <div className="flex items-center gap-6">
+                <h2 className="text-2xl font-bold">Solicitar Orçamento</h2>
+
+                {/* Progress Steps */}
+                <div className="flex items-center space-x-2">
+                  {[1, 2, 3, 4].map((step) => (
+                    <div key={step} className="flex items-center">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
+                        currentStep >= step ? 'bg-white text-[#deb052]' : 'bg-white/20 text-white/60'
+                      }`}>
+                        {step}
+                      </div>
+                      {step < 4 && (
+                        <div className={`w-4 h-1 mx-1 ${
+                          currentStep > step ? 'bg-white' : 'bg-white/20'
+                        }`} />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <button
+                onClick={() => handleClose(true)}
+                className="text-white/80 hover:text-white transition-colors"
+              >
+                <X size={24} />
+              </button>
+            </div>
+          </div>
+
+          {/* Content */}
+          <div className="p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
+            {currentStep === 1 && renderServiceSelection()}
+            {currentStep === 2 && renderServiceConfiguration()}
+            {currentStep === 3 && renderSummary()}
+            {currentStep === 4 && renderContactForm()}
+          </div>
+
+          {/* Footer with Companies Link */}
+          <div className="border-t border-gray-200 bg-gray-50 px-6 py-4 text-center">
+            <p className="text-sm text-gray-600">
+              É uma empresa? 
+              <a 
+                href="/empresas" 
+                className="ml-2 text-[#deb052] font-semibold hover:text-[#c99a47] transition-colors"
+                onClick={() => handleClose(false)}
+              >
+                Clique aqui para soluções B2B
+              </a>
+            </p>
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
+  );
+};
+
+export default QuoteRequestModal;

@@ -1,0 +1,1565 @@
+import React, { useState, useEffect } from 'react';
+import { Plus, Save, Trash2, Edit, Info, ChevronUp, Upload, Crop, Image as ImageIcon, Edit3, X, ArrowRight } from 'lucide-react';
+import { toast } from 'react-hot-toast';
+import { supabase } from '../lib/supabase';
+import ServiceModal from './ServiceModal';
+import EditServiceModal from './EditServiceModal';
+
+interface Service {
+  id?: string;
+  type: string;
+  name: string;
+  description: string | null;
+  icon: string;
+  icon_type: 'emoji' | 'image' | 'lucide';
+  icon_image_url?: string;
+  price_type: string;
+  base_price: number;
+  active: boolean;
+  display_order: number;
+  created_at?: string;
+  updated_at?: string;
+  service_config?: any;
+  saber_mais_content: any;
+  pricing_rules?: {
+    base_price: number;
+    unit_label: string;
+    calculation_type: string;
+    min_quantity: number;
+    max_quantity: number;
+    custom_formula?: string;
+    multipliers?: { [key: string]: number };
+  };
+}
+
+interface Subservice {
+  id?: string;
+  parent_service_type: string;
+  subservice_key: string;
+  name: string;
+  description: string | null;
+  icon: string;
+  icon_type: 'emoji' | 'image' | 'lucide';
+  icon_image_url?: string;
+  price_type: string;
+  base_price: number;
+  active: boolean;
+  display_order: number;
+  service_config?: any;
+  pricing_rules?: any;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface ServiceExtra {
+  id?: string;
+  service_type: string;
+  subservice_key?: string;
+  extra_key: string;
+  extra_name: string;
+  extra_description?: string;
+  extra_price: number;
+  is_conditional: boolean;
+  condition_key?: string;
+  condition_value?: string;
+  display_order: number;
+  active: boolean;
+}
+
+const initialService: Service = {
+  type: '',
+  name: '',
+  description: '',
+  icon: '🛋️',
+  icon_type: 'emoji',
+  price_type: 'fixed',
+  base_price: 50,
+  active: true,
+  display_order: 0,
+  service_config: {
+    has_quantity: true,
+    has_subtype: false,
+    specifications: []
+  },
+  saber_mais_content: {
+    description: '',
+    process: [],
+    benefits: []
+  },
+  pricing_rules: {
+    base_price: 50,
+    unit_label: 'unidade',
+    calculation_type: 'fixed',
+    min_quantity: 1,
+    max_quantity: 10
+  }
+};
+
+const initialSubservice: Subservice = {
+  parent_service_type: '',
+  subservice_key: '',
+  name: '',
+  description: '',
+  icon: '🔧',
+  icon_type: 'emoji',
+  price_type: 'fixed',
+  base_price: 50,
+  active: true,
+  display_order: 0,
+  service_config: {
+    has_quantity: true,
+    has_subtype: false,
+    specifications: []
+  },
+  pricing_rules: {
+    base_price: 50,
+    unit_label: 'unidade',
+    calculation_type: 'fixed',
+    min_quantity: 1,
+    max_quantity: 10
+  }
+};
+
+export default function ServicesManager() {
+  const [services, setServices] = useState<Service[]>([]);
+  const [subservices, setSubservices] = useState<Subservice[]>([]);
+  const [serviceExtras, setServiceExtras] = useState<ServiceExtra[]>([]);
+  const [isAddingService, setIsAddingService] = useState(false);
+  const [isAddingSubservice, setIsAddingSubservice] = useState<string | null>(null);
+  const [newService, setNewService] = useState<Service>(initialService);
+  const [newSubservice, setNewSubservice] = useState<Subservice>(initialSubservice);
+  const [isSaving, setIsSaving] = useState(false);
+  const [editingServiceId, setEditingServiceId] = useState<string | null>(null);
+  const [editingSubserviceId, setEditingSubserviceId] = useState<string | null>(null);
+  const [isSaberMaisModalOpen, setIsSaberMaisModalOpen] = useState(false);
+  const [selectedServiceForSaberMais, setSelectedServiceForSaberMais] = useState<Service | null>(null);
+  const [isEditServiceModalOpen, setIsEditServiceModalOpen] = useState(false);
+  const [serviceToEdit, setServiceToEdit] = useState<Service | null>(null);
+  const [isManagingExtras, setIsManagingExtras] = useState<string | null>(null);
+  const [editingExtraId, setEditingExtraId] = useState<string | null>(null);
+  const [newExtra, setNewExtra] = useState<ServiceExtra>({
+    service_type: '',
+    extra_key: '',
+    extra_name: '',
+    extra_description: '',
+    extra_price: 0,
+    is_conditional: false,
+    display_order: 0,
+    active: true
+  });
+  const [expandedServices, setExpandedServices] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    fetchServices();
+    fetchSubservices();
+    fetchServiceExtras();
+  }, []);
+
+  const fetchServices = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('services')
+        .select('*')
+        .order('display_order', { ascending: true });
+
+      if (error) throw error;
+      setServices(data || []);
+    } catch (error) {
+      console.error('Error fetching services:', error);
+      toast.error('Erro ao carregar serviços');
+    }
+  };
+
+  const fetchSubservices = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('subservices')
+        .select('*')
+        .order('parent_service_type', { ascending: true })
+        .order('display_order', { ascending: true });
+
+      if (error) throw error;
+      setSubservices(data || []);
+    } catch (error) {
+      console.error('Error fetching subservices:', error);
+      toast.error('Erro ao carregar subserviços');
+    }
+  };
+
+  const fetchServiceExtras = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('service_extras')
+        .select('*')
+        .order('service_type', { ascending: true })
+        .order('display_order', { ascending: true });
+
+      if (error) throw error;
+      setServiceExtras(data || []);
+    } catch (error) {
+      console.error('Error fetching service extras:', error);
+      toast.error('Erro ao carregar extras dos serviços');
+    }
+  };
+
+  const handleImageUpload = async (file: File, serviceId?: string) => {
+    try {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `service-${serviceId || Date.now()}.${fileExt}`;
+      const filePath = `service-icons/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('images')
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('images')
+        .getPublicUrl(filePath);
+
+      return publicUrl;
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      toast.error('Erro ao fazer upload da imagem');
+      return null;
+    }
+  };
+
+  const handleSave = async (serviceToSave: Service) => {
+    if (!serviceToSave.name?.trim()) {
+      toast.error('Nome do serviço é obrigatório');
+      return;
+    }
+
+    if (!serviceToSave.type?.trim()) {
+      toast.error('Tipo do serviço é obrigatório');
+      return;
+    }
+
+    if (!editingServiceId) {
+      const existingService = services.find(s => s.type.toLowerCase() === serviceToSave.type.toLowerCase());
+      if (existingService) {
+        toast.error('Já existe um serviço com este tipo. Use um tipo único.');
+        return;
+      }
+    }
+
+    setIsSaving(true);
+    try {
+      const serviceData = {
+        type: serviceToSave.type.trim().toLowerCase().replace(/\s+/g, '-'),
+        name: serviceToSave.name.trim(),
+        description: serviceToSave.description?.trim() || null,
+        icon: serviceToSave.icon,
+        icon_type: serviceToSave.icon_type,
+        icon_image_url: serviceToSave.icon_image_url,
+        price_type: serviceToSave.price_type,
+        base_price: serviceToSave.pricing_rules?.base_price || serviceToSave.base_price,
+        active: serviceToSave.active,
+        display_order: serviceToSave.display_order,
+        service_config: serviceToSave.service_config,
+        saber_mais_content: serviceToSave.saber_mais_content,
+        pricing_rules: serviceToSave.pricing_rules
+      };
+
+      if (editingServiceId) {
+        const { error } = await supabase
+          .from('services')
+          .update(serviceData)
+          .eq('id', editingServiceId);
+        
+        if (error) {
+          console.error('Update error:', error);
+          throw error;
+        }
+        toast.success('Serviço atualizado com sucesso!');
+      } else {
+        const { data, error } = await supabase
+          .from('services')
+          .insert([serviceData])
+          .select();
+
+        if (error) {
+          console.error('Insert error:', error);
+          throw error;
+        }
+        
+        toast.success('Serviço criado com sucesso!');
+      }
+
+      setIsAddingService(false);
+      setIsEditServiceModalOpen(false);
+      setEditingServiceId(null);
+      setNewService(initialService);
+      setServiceToEdit(null);
+      fetchServices();
+    } catch (error: any) {
+      console.error('Error saving service:', error);
+      
+      let errorMessage = 'Erro ao salvar serviço';
+      if (error?.message) {
+        if (error.message.includes('duplicate key') || error.message.includes('unique constraint')) {
+          errorMessage = 'Já existe um serviço com este tipo. Use um tipo único.';
+        } else if (error.message.includes('check constraint')) {
+          errorMessage = 'Dados inválidos. Verifique os campos obrigatórios.';
+        } else {
+          errorMessage = `Erro: ${error.message}`;
+        }
+      }
+      
+      toast.error(errorMessage);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSaveSubservice = async () => {
+    if (!newSubservice.name?.trim() || !newSubservice.subservice_key?.trim()) {
+      toast.error('Nome e chave do subserviço são obrigatórios');
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const subserviceData = {
+        parent_service_type: newSubservice.parent_service_type,
+        subservice_key: newSubservice.subservice_key.trim().toLowerCase().replace(/\s+/g, '-'),
+        name: newSubservice.name.trim(),
+        description: newSubservice.description?.trim() || null,
+        icon: newSubservice.icon,
+        icon_type: newSubservice.icon_type,
+        icon_image_url: newSubservice.icon_image_url,
+        price_type: newSubservice.price_type,
+        base_price: newSubservice.pricing_rules?.base_price || newSubservice.base_price,
+        active: newSubservice.active,
+        display_order: newSubservice.display_order,
+        service_config: newSubservice.service_config,
+        pricing_rules: newSubservice.pricing_rules
+      };
+
+      if (editingSubserviceId) {
+        const { error } = await supabase
+          .from('subservices')
+          .update(subserviceData)
+          .eq('id', editingSubserviceId);
+        
+        if (error) throw error;
+        toast.success('Subserviço atualizado com sucesso!');
+        setEditingSubserviceId(null);
+      } else {
+        const { error } = await supabase
+          .from('subservices')
+          .insert([subserviceData]);
+
+        if (error) throw error;
+        toast.success('Subserviço criado com sucesso!');
+        setIsAddingSubservice(null);
+      }
+
+      setNewSubservice(initialSubservice);
+      fetchSubservices();
+    } catch (error: any) {
+      console.error('Error saving subservice:', error);
+      toast.error('Erro ao salvar subserviço: ' + (error.message || 'Erro desconhecido'));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm('Tem certeza que deseja remover este serviço?')) {
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('services')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      toast.success('Serviço removido com sucesso!');
+      fetchServices();
+    } catch (error) {
+      console.error('Error deleting service:', error);
+      toast.error('Erro ao remover serviço');
+    }
+  };
+
+  const handleDeleteSubservice = async (id: string) => {
+    if (!confirm('Tem certeza que deseja remover este subserviço?')) {
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('subservices')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      toast.success('Subserviço removido com sucesso!');
+      fetchSubservices();
+    } catch (error) {
+      console.error('Error deleting subservice:', error);
+      toast.error('Erro ao remover subserviço');
+    }
+  };
+
+  const toggleActive = async (id: string, currentStatus: boolean) => {
+    try {
+      const { error } = await supabase
+        .from('services')
+        .update({ active: !currentStatus })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      toast.success(`Serviço ${!currentStatus ? 'ativado' : 'desativado'}!`);
+      fetchServices();
+    } catch (error) {
+      console.error('Error toggling active status:', error);
+      toast.error('Erro ao atualizar status do serviço');
+    }
+  };
+
+  const toggleSubserviceActive = async (id: string, currentStatus: boolean) => {
+    try {
+      const { error } = await supabase
+        .from('subservices')
+        .update({ active: !currentStatus })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      toast.success(`Subserviço ${!currentStatus ? 'ativado' : 'desativado'}!`);
+      fetchSubservices();
+    } catch (error) {
+      console.error('Error toggling subservice active status:', error);
+      toast.error('Erro ao atualizar status do subserviço');
+    }
+  };
+
+  const handleSaveSaberMais = async (serviceId: string, saberMaisContent: any) => {
+    setIsSaving(true);
+    try {
+      const { error } = await supabase
+        .from('services')
+        .update({ saber_mais_content: saberMaisContent })
+        .eq('id', serviceId);
+
+      if (error) throw error;
+
+      toast.success('Conteúdo "Saber Mais" atualizado com sucesso!');
+      setIsSaberMaisModalOpen(false);
+      fetchServices();
+    } catch (error) {
+      console.error('Error saving "Saber Mais" content:', error);
+      toast.error('Erro ao salvar conteúdo "Saber Mais"');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const moveServiceUp = async (service: Service) => {
+    const currentIndex = services.findIndex(s => s.id === service.id);
+    if (currentIndex > 0) {
+      const prevService = services[currentIndex - 1];
+      await swapDisplayOrders(service, prevService, currentIndex, currentIndex - 1);
+    }
+  };
+
+  const swapDisplayOrders = async (serviceA: Service, serviceB: Service, indexA: number, indexB: number) => {
+    if (!serviceA || !serviceB) {
+      console.error("Cannot swap undefined services");
+      return;
+    }
+
+    const orderA = serviceA.display_order;
+    const orderB = serviceB.display_order;
+
+    const newServices = [...services];
+    newServices[indexA] = { ...serviceA, display_order: orderB };
+    newServices[indexB] = { ...serviceB, display_order: orderA };
+    setServices(newServices);
+
+    try {
+      const updateA = supabase
+        .from('services')
+        .update({ display_order: orderB })
+        .eq('id', serviceA.id);
+
+      const updateB = supabase
+        .from('services')
+        .update({ display_order: orderA })
+        .eq('id', serviceB.id);
+
+      const results = await Promise.all([updateA, updateB]);
+
+      if (results.every(result => !result.error)) {
+        toast.success('Serviços reordenados com sucesso!');
+        fetchServices();
+      } else {
+        fetchServices();
+      }
+    } catch (error) {
+      console.error('Error swapping display orders:', error);
+      toast.error('Erro ao reordenar serviços');
+      fetchServices();
+    }
+  };
+
+  const handleSaveExtra = async () => {
+    if (!newExtra.extra_name?.trim() || !newExtra.extra_key?.trim()) {
+      toast.error('Nome e chave do extra são obrigatórios');
+      return;
+    }
+
+    try {
+      if (editingExtraId) {
+        const { error } = await supabase
+          .from('service_extras')
+          .update({
+            extra_key: newExtra.extra_key,
+            extra_name: newExtra.extra_name,
+            extra_description: newExtra.extra_description,
+            extra_price: newExtra.extra_price,
+            is_conditional: newExtra.is_conditional,
+            condition_key: newExtra.condition_key,
+            condition_value: newExtra.condition_value,
+            display_order: newExtra.display_order,
+            active: newExtra.active,
+            subservice_key: newExtra.subservice_key
+          })
+          .eq('id', editingExtraId);
+
+        if (error) throw error;
+        toast.success('Extra atualizado com sucesso!');
+        setEditingExtraId(null);
+      } else {
+        const { error } = await supabase
+          .from('service_extras')
+          .insert([newExtra]);
+
+        if (error) throw error;
+        toast.success('Extra adicionado com sucesso!');
+      }
+
+      setNewExtra({
+        service_type: newExtra.service_type,
+        subservice_key: newExtra.subservice_key,
+        extra_key: '',
+        extra_name: '',
+        extra_description: '',
+        extra_price: 0,
+        is_conditional: false,
+        display_order: 0,
+        active: true
+      });
+      fetchServiceExtras();
+    } catch (error) {
+      console.error('Error saving extra:', error);
+      toast.error('Erro ao salvar extra');
+    }
+  };
+
+  const handleEditExtra = (extra: ServiceExtra) => {
+    setEditingExtraId(extra.id!);
+    setNewExtra({
+      service_type: extra.service_type,
+      subservice_key: extra.subservice_key,
+      extra_key: extra.extra_key,
+      extra_name: extra.extra_name,
+      extra_description: extra.extra_description || '',
+      extra_price: extra.extra_price,
+      is_conditional: extra.is_conditional,
+      condition_key: extra.condition_key,
+      condition_value: extra.condition_value,
+      display_order: extra.display_order,
+      active: extra.active
+    });
+  };
+
+  const handleCancelEditExtra = () => {
+    setEditingExtraId(null);
+    setNewExtra({
+      service_type: newExtra.service_type,
+      subservice_key: newExtra.subservice_key,
+      extra_key: '',
+      extra_name: '',
+      extra_description: '',
+      extra_price: 0,
+      is_conditional: false,
+      display_order: 0,
+      active: true
+    });
+  };
+
+  const handleDeleteExtra = async (extraId: string) => {
+    if (!confirm('Tem certeza que deseja remover este extra?')) return;
+
+    try {
+      const { error } = await supabase
+        .from('service_extras')
+        .delete()
+        .eq('id', extraId);
+
+      if (error) throw error;
+
+      toast.success('Extra removido com sucesso!');
+      fetchServiceExtras();
+    } catch (error) {
+      console.error('Error deleting extra:', error);
+      toast.error('Erro ao remover extra');
+    }
+  };
+
+  const renderExtrasManager = (serviceType: string, subserviceKey?: string) => {
+    const extrasForService = serviceExtras.filter(e => 
+      e.service_type === serviceType && 
+      (subserviceKey ? e.subservice_key === subserviceKey : !e.subservice_key)
+    );
+
+    const managingKey = subserviceKey ? `${serviceType}-${subserviceKey}` : serviceType;
+
+    return (
+      <div className="mt-4 p-4 bg-gray-50 rounded-lg border-2 border-gray-200">
+        <h5 className="font-medium mb-4 text-gray-800 flex items-center gap-2">
+          <Plus size={16} />
+          Gestão de Extras - {services.find(s => s.type === serviceType)?.name}
+          {subserviceKey && ` > ${subservices.find(s => s.subservice_key === subserviceKey)?.name}`}
+        </h5>
+        
+        {/* Lista de extras existentes */}
+        <div className="space-y-3 mb-6">
+          {extrasForService.map((extra) => (
+            <div key={extra.id} className="flex justify-between items-center p-3 bg-white rounded-lg border shadow-sm">
+              <div className="flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-gray-900">{extra.extra_name}</span>
+                  <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded">
+                    {extra.extra_key}
+                  </span>
+                  {extra.extra_price > 0 && (
+                    <span className="text-[#deb052] font-semibold">+{extra.extra_price}€</span>
+                  )}
+                  {extra.is_conditional && (
+                    <span className="text-blue-500 text-xs bg-blue-100 px-2 py-1 rounded">
+                      Condicional
+                    </span>
+                  )}
+                  {!extra.active && (
+                    <span className="text-red-500 text-xs bg-red-100 px-2 py-1 rounded">
+                      Inativo
+                    </span>
+                  )}
+                </div>
+                {extra.extra_description && (
+                  <p className="text-sm text-gray-600 mt-1">{extra.extra_description}</p>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleEditExtra(extra)}
+                  className="text-blue-500 hover:text-blue-700 p-1 rounded hover:bg-blue-50"
+                  title="Editar extra"
+                >
+                  <Edit3 size={16} />
+                </button>
+                <button
+                  onClick={() => handleDeleteExtra(extra.id!)}
+                  className="text-red-500 hover:text-red-700 p-1 rounded hover:bg-red-50"
+                  title="Remover extra"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            </div>
+          ))}
+          
+          {extrasForService.length === 0 && (
+            <div className="text-center py-4 text-gray-500 bg-white rounded-lg border-2 border-dashed border-gray-300">
+              <p>Nenhum extra configurado</p>
+              <p className="text-sm">Adicione extras para personalizar as opções do cliente</p>
+            </div>
+          )}
+        </div>
+
+        {/* Formulário para novo/editar extra */}
+        <div className="bg-white p-4 rounded-lg border-2 border-[#deb052]/20">
+          <h6 className="font-medium mb-3 text-gray-800">
+            {editingExtraId ? 'Editar Extra' : 'Adicionar Novo Extra'}
+          </h6>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Chave do Extra *
+              </label>
+              <input
+                type="text"
+                placeholder="ex: almofadas, chaise_longue"
+                value={newExtra.extra_key}
+                onChange={(e) => setNewExtra({ ...newExtra, extra_key: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#deb052] text-sm"
+              />
+              <p className="text-xs text-gray-500 mt-1">Identificador único (sem espaços)</p>
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Nome do Extra *
+              </label>
+              <input
+                type="text"
+                placeholder="ex: Almofadas, Chaise Longue"
+                value={newExtra.extra_name}
+                onChange={(e) => setNewExtra({ ...newExtra, extra_name: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#deb052] text-sm"
+              />
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Preço Extra (€)
+              </label>
+              <input
+                type="number"
+                placeholder="0.00"
+                value={newExtra.extra_price}
+                onChange={(e) => setNewExtra({ ...newExtra, extra_price: parseFloat(e.target.value) || 0 })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#deb052] text-sm"
+                step="0.01"
+                min="0"
+              />
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Ordem de Exibição
+              </label>
+              <input
+                type="number"
+                value={newExtra.display_order}
+                onChange={(e) => setNewExtra({ ...newExtra, display_order: parseInt(e.target.value) || 0 })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#deb052] text-sm"
+                min="0"
+              />
+            </div>
+            
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Descrição (Opcional)
+              </label>
+              <textarea
+                placeholder="Descrição detalhada do extra..."
+                value={newExtra.extra_description}
+                onChange={(e) => setNewExtra({ ...newExtra, extra_description: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#deb052] text-sm"
+                rows={2}
+              />
+            </div>
+            
+            <div className="flex items-center gap-4">
+              <label className="flex items-center text-sm">
+                <input
+                  type="checkbox"
+                  checked={newExtra.is_conditional}
+                  onChange={(e) => setNewExtra({ ...newExtra, is_conditional: e.target.checked })}
+                  className="mr-2"
+                />
+                É Condicional
+              </label>
+              
+              <label className="flex items-center text-sm">
+                <input
+                  type="checkbox"
+                  checked={newExtra.active}
+                  onChange={(e) => setNewExtra({ ...newExtra, active: e.target.checked })}
+                  className="mr-2"
+                />
+                Ativo
+              </label>
+            </div>
+            
+            {newExtra.is_conditional && (
+              <div className="md:col-span-2 grid grid-cols-2 gap-4 p-3 bg-blue-50 rounded-lg">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Chave da Condição
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="ex: tem_animais"
+                    value={newExtra.condition_key || ''}
+                    onChange={(e) => setNewExtra({ ...newExtra, condition_key: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Valor da Condição
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="ex: true, pelo_comprido"
+                    value={newExtra.condition_value || ''}
+                    onChange={(e) => setNewExtra({ ...newExtra, condition_value: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+          
+          <div className="flex justify-end gap-3 mt-4">
+            {editingExtraId && (
+              <button
+                onClick={handleCancelEditExtra}
+                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 text-sm"
+              >
+                Cancelar
+              </button>
+            )}
+            <button
+              onClick={handleSaveExtra}
+              className="px-4 py-2 bg-[#deb052] text-white rounded-md hover:bg-[#c99a47] text-sm font-medium"
+            >
+              {editingExtraId ? 'Atualizar Extra' : 'Adicionar Extra'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const handleStartAddService = () => {
+    setNewService({
+      ...initialService,
+      display_order: services.length
+    });
+    setIsAddingService(true);
+    setEditingServiceId(null);
+  };
+
+  const handleCancelAdd = () => {
+    setIsAddingService(false);
+    setNewService(initialService);
+  };
+
+  const handleStartAddSubservice = (serviceType: string) => {
+    setNewSubservice({
+      ...initialSubservice,
+      parent_service_type: serviceType,
+      display_order: subservices.filter(s => s.parent_service_type === serviceType).length
+    });
+    setIsAddingSubservice(serviceType);
+  };
+
+  const handleCancelAddSubservice = () => {
+    setIsAddingSubservice(null);
+    setNewSubservice(initialSubservice);
+  };
+
+  const toggleServiceExpansion = (serviceType: string) => {
+    const newExpanded = new Set(expandedServices);
+    if (newExpanded.has(serviceType)) {
+      newExpanded.delete(serviceType);
+    } else {
+      newExpanded.add(serviceType);
+    }
+    setExpandedServices(newExpanded);
+  };
+
+  const renderServiceIcon = (service: Service | Subservice) => {
+    if (service.icon_type === 'image' && service.icon_image_url) {
+      return (
+        <img 
+          src={service.icon_image_url} 
+          alt={service.name}
+          className="w-10 h-10 object-contain"
+        />
+      );
+    }
+    return <span className="text-2xl">{service.icon}</span>;
+  };
+
+  return (
+    <div className="bg-white shadow rounded-lg">
+      <div className="px-4 py-5 sm:px-6 flex justify-between items-center">
+        <h3 className="text-lg leading-6 font-medium text-gray-900">
+          Gestão de Serviços e Subserviços
+        </h3>
+        <button
+          onClick={handleStartAddService}
+          className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-[#deb052] hover:bg-[#c99a47] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#deb052]"
+        >
+          <Plus size={16} className="mr-2" />
+          Novo Serviço
+        </button>
+      </div>
+
+      <div className="border-t border-gray-200 px-4 py-5 sm:px-6">
+        {/* Add Service Form */}
+        {isAddingService && (
+          <div className="mb-8 p-4 bg-green-50 rounded-lg border-2 border-green-200">
+            <h4 className="text-lg font-medium mb-4 text-green-800">
+              ✨ Criar Novo Serviço
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Nome do Serviço *
+                </label>
+                <input
+                  type="text"
+                  value={newService.name}
+                  onChange={(e) => setNewService({ ...newService, name: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#deb052]"
+                  placeholder="Ex: Limpeza de Sofás"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Tipo (identificador único) *
+                </label>
+                <input
+                  type="text"
+                  value={newService.type}
+                  onChange={(e) => setNewService({ ...newService, type: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#deb052]"
+                  placeholder="Ex: limpeza-sofa"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Descrição
+                </label>
+                <textarea
+                  value={newService.description || ''}
+                  onChange={(e) => setNewService({ ...newService, description: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#deb052]"
+                  rows={3}
+                  placeholder="Descrição do serviço..."
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Ícone (Emoji)
+                </label>
+                <input
+                  type="text"
+                  value={newService.icon}
+                  onChange={(e) => setNewService({ ...newService, icon: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#deb052]"
+                  placeholder="🛋️"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Tipo de Preço
+                </label>
+                <select
+                  value={newService.price_type}
+                  onChange={(e) => {
+                    const priceType = e.target.value;
+                    setNewService({ 
+                      ...newService, 
+                      price_type: priceType,
+                      pricing_rules: {
+                        ...newService.pricing_rules!,
+                        calculation_type: priceType,
+                        unit_label: priceType === 'per_seat' ? 'lugares' : 
+                                   priceType === 'per_sqm' ? 'm²' : 
+                                   priceType === 'per_item' ? 'unidades' : 'unidade'
+                      }
+                    });
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#deb052]"
+                >
+                  <option value="fixed">Preço Fixo</option>
+                  <option value="per_seat">Preço por Lugar</option>
+                  <option value="per_sqm">Preço por Metro Quadrado</option>
+                  <option value="per_item">Preço por Item</option>
+                  <option value="custom">Personalizado</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Preço Base (€)
+                </label>
+                <input
+                  type="number"
+                  value={newService.pricing_rules?.base_price || newService.base_price}
+                  onChange={(e) => {
+                    const price = parseFloat(e.target.value) || 0;
+                    setNewService({ 
+                      ...newService, 
+                      base_price: price,
+                      pricing_rules: {
+                        ...newService.pricing_rules!,
+                        base_price: price
+                      }
+                    });
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#deb052]"
+                  step="0.01"
+                  min="0"
+                />
+              </div>
+            </div>
+
+            <div className="mt-4 flex justify-end gap-4">
+              <button
+                onClick={handleCancelAdd}
+                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                disabled={isSaving}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => handleSave(newService)}
+                disabled={isSaving || !newService.name?.trim() || !newService.type?.trim()}
+                className="px-4 py-2 bg-[#deb052] text-white rounded-md hover:bg-[#c99a47] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSaving ? 'Salvando...' : 'Criar Serviço'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="space-y-4">
+          {services.map((service) => {
+            const serviceSubservices = subservices.filter(s => s.parent_service_type === service.type);
+            const isExpanded = expandedServices.has(service.type);
+            
+            return (
+              <div
+                key={service.id}
+                className="border rounded-lg p-4 hover:shadow-md transition-shadow"
+              >
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 flex items-center justify-center">
+                      {renderServiceIcon(service)}
+                    </div>
+                    <div>
+                      <h4 className="text-lg font-medium">{service.name}</h4>
+                      <p className="text-gray-500 text-sm">{service.type}</p>
+                      <p className="text-gray-600 text-sm">
+                        {service.price_type === 'fixed' ? 'Preço fixo' :
+                         service.price_type === 'per_seat' ? 'Por lugar' :
+                         service.price_type === 'per_sqm' ? 'Por m²' :
+                         service.price_type === 'per_item' ? 'Por item' : 'Personalizado'} - {service.base_price}€
+                      </p>
+                      {serviceSubservices.length > 0 && (
+                        <p className="text-blue-600 text-sm">
+                          {serviceSubservices.length} subserviço(s)
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => moveServiceUp(service)}
+                      className="p-1 hover:bg-gray-100 rounded-full"
+                      disabled={services.indexOf(service) === 0}
+                      title="Mover para cima"
+                    >
+                      <ChevronUp size={16} />
+                    </button>
+
+                    {/* Expandir/Colapsar subserviços */}
+                    {serviceSubservices.length > 0 && (
+                      <button
+                        onClick={() => toggleServiceExpansion(service.type)}
+                        className="p-1 hover:bg-gray-100 rounded-full"
+                        title={isExpanded ? 'Colapsar subserviços' : 'Expandir subserviços'}
+                      >
+                        <ArrowRight size={16} className={`transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                      </button>
+                    )}
+
+                    {/* Adicionar subserviço */}
+                    <button
+                      onClick={() => handleStartAddSubservice(service.type)}
+                      className="text-green-500 hover:text-green-700 p-1 rounded"
+                      title="Adicionar subserviço"
+                    >
+                      <Plus size={20} />
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        if (isManagingExtras === service.type) {
+                          setIsManagingExtras(null);
+                          setEditingExtraId(null);
+                          setNewExtra({
+                            service_type: '',
+                            extra_key: '',
+                            extra_name: '',
+                            extra_description: '',
+                            extra_price: 0,
+                            is_conditional: false,
+                            display_order: 0,
+                            active: true
+                          });
+                        } else {
+                          setIsManagingExtras(service.type);
+                          setNewExtra({ ...newExtra, service_type: service.type, subservice_key: undefined });
+                        }
+                      }}
+                      className={`text-purple-500 hover:text-purple-700 p-1 rounded ${
+                        isManagingExtras === service.type ? 'bg-purple-100' : ''
+                      }`}
+                      title="Gerir extras"
+                    >
+                      <Edit3 size={20} />
+                    </button>
+                    
+                    <button
+                      onClick={() => {
+                        setEditingServiceId(service.id);
+                        setServiceToEdit(service);
+                        setIsEditServiceModalOpen(true);
+                      }}
+                      className="text-blue-500 hover:text-blue-700"
+                      title="Editar serviço"
+                    >
+                      <Edit size={20} />
+                    </button>
+                    
+                    <button
+                      onClick={() => {
+                        setSelectedServiceForSaberMais(service);
+                        setIsSaberMaisModalOpen(true);
+                      }}
+                      className="text-blue-500 hover:text-blue-700"
+                      title="Editar conteúdo 'Saber Mais'"
+                    >
+                      <Info size={20} />
+                    </button>
+                    
+                    <button
+                      onClick={() => toggleActive(service.id!, service.active)}
+                      className={`px-3 py-1 rounded-full text-sm font-medium ${
+                        service.active
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-gray-100 text-gray-800'
+                      }`}
+                    >
+                      {service.active ? 'Ativo' : 'Inativo'}
+                    </button>
+                    
+                    <button
+                      onClick={() => service.id && handleDelete(service.id)}
+                      className="text-red-500 hover:text-red-700"
+                      title="Remover serviço"
+                    >
+                      <Trash2 size={20} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-2">
+                  <p className="text-gray-600 text-sm line-clamp-2">
+                    {service.description || 'Sem descrição'}
+                  </p>
+                </div>
+
+                {/* Subserviços */}
+                {isExpanded && serviceSubservices.length > 0 && (
+                  <div className="mt-4 ml-8 space-y-3 border-l-2 border-gray-200 pl-4">
+                    {serviceSubservices.map((subservice) => (
+                      <div key={subservice.id} className="bg-gray-50 p-3 rounded-lg">
+                        <div className="flex justify-between items-center">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 flex items-center justify-center">
+                              {renderServiceIcon(subservice)}
+                            </div>
+                            <div>
+                              <h5 className="font-medium text-gray-900">{subservice.name}</h5>
+                              <p className="text-sm text-gray-600">{subservice.description}</p>
+                              <p className="text-sm text-gray-500">{subservice.base_price}€</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => {
+                                const managingKey = `${service.type}-${subservice.subservice_key}`;
+                                if (isManagingExtras === managingKey) {
+                                  setIsManagingExtras(null);
+                                  setEditingExtraId(null);
+                                  setNewExtra({
+                                    service_type: '',
+                                    extra_key: '',
+                                    extra_name: '',
+                                    extra_description: '',
+                                    extra_price: 0,
+                                    is_conditional: false,
+                                    display_order: 0,
+                                    active: true
+                                  });
+                                } else {
+                                  setIsManagingExtras(managingKey);
+                                  setNewExtra({ 
+                                    ...newExtra, 
+                                    service_type: service.type, 
+                                    subservice_key: subservice.subservice_key 
+                                  });
+                                }
+                              }}
+                              className={`text-purple-500 hover:text-purple-700 p-1 rounded text-sm ${
+                                isManagingExtras === `${service.type}-${subservice.subservice_key}` ? 'bg-purple-100' : ''
+                              }`}
+                              title="Gerir extras do subserviço"
+                            >
+                              <Edit3 size={16} />
+                            </button>
+                            
+                            <button
+                              onClick={() => toggleSubserviceActive(subservice.id!, subservice.active)}
+                              className={`px-2 py-1 rounded text-xs font-medium ${
+                                subservice.active
+                                  ? 'bg-green-100 text-green-800'
+                                  : 'bg-gray-100 text-gray-800'
+                              }`}
+                            >
+                              {subservice.active ? 'Ativo' : 'Inativo'}
+                            </button>
+                            
+                            <button
+                              onClick={() => subservice.id && handleDeleteSubservice(subservice.id)}
+                              className="text-red-500 hover:text-red-700"
+                              title="Remover subserviço"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </div>
+                        
+                        {/* Extras do subserviço */}
+                        {isManagingExtras === `${service.type}-${subservice.subservice_key}` && 
+                          renderExtrasManager(service.type, subservice.subservice_key)}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Formulário para adicionar subserviço */}
+                {isAddingSubservice === service.type && (
+                  <div className="mt-4 p-4 bg-blue-50 rounded-lg border-2 border-blue-200">
+                    <h5 className="font-medium mb-3 text-blue-800">Adicionar Subserviço</h5>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Nome do Subserviço *
+                        </label>
+                        <input
+                          type="text"
+                          value={newSubservice.name}
+                          onChange={(e) => setNewSubservice({ ...newSubservice, name: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          placeholder="Ex: Limpeza de Vidros"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Chave do Subserviço *
+                        </label>
+                        <input
+                          type="text"
+                          value={newSubservice.subservice_key}
+                          onChange={(e) => setNewSubservice({ ...newSubservice, subservice_key: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          placeholder="Ex: vidros"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Ícone (Emoji)
+                        </label>
+                        <input
+                          type="text"
+                          value={newSubservice.icon}
+                          onChange={(e) => setNewSubservice({ ...newSubservice, icon: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          placeholder="🪟"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Preço Base (€)
+                        </label>
+                        <input
+                          type="number"
+                          value={newSubservice.base_price}
+                          onChange={(e) => setNewSubservice({ ...newSubservice, base_price: parseFloat(e.target.value) || 0 })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          step="0.01"
+                          min="0"
+                        />
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Descrição
+                        </label>
+                        <textarea
+                          value={newSubservice.description || ''}
+                          onChange={(e) => setNewSubservice({ ...newSubservice, description: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          rows={2}
+                          placeholder="Descrição do subserviço..."
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex justify-end gap-3">
+                      <button
+                        onClick={handleCancelAddSubservice}
+                        className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        onClick={handleSaveSubservice}
+                        disabled={isSaving || !newSubservice.name?.trim() || !newSubservice.subservice_key?.trim()}
+                        className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50"
+                      >
+                        {isSaving ? 'Salvando...' : 'Adicionar Subserviço'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Gestão de extras do serviço principal */}
+                {isManagingExtras === service.type && renderExtrasManager(service.type)}
+              </div>
+            );
+          })}
+
+          {services.length === 0 && !isAddingService && (
+            <p className="text-center text-gray-500 py-4">
+              Nenhum serviço cadastrado. Clique em "Novo Serviço" para começar.
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* Saber Mais Modal */}
+      {isSaberMaisModalOpen && selectedServiceForSaberMais && (
+        <SaberMaisModal
+          isOpen={isSaberMaisModalOpen}
+          onClose={() => { setIsSaberMaisModalOpen(false); setSelectedServiceForSaberMais(null); }}
+          service={selectedServiceForSaberMais}
+          onSave={handleSaveSaberMais}
+        />
+      )}
+
+      {/* Edit Service Modal */}
+      {isEditServiceModalOpen && serviceToEdit && (
+        <EditServiceModal
+          isOpen={isEditServiceModalOpen}
+          onClose={() => { setIsEditServiceModalOpen(false); setEditingServiceId(null); setServiceToEdit(null); }}
+          service={serviceToEdit}
+          onSave={handleSave}
+        />
+      )}
+    </div>
+  );
+}
+
+interface SaberMaisModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  service: Service;
+  onSave: (serviceId: string, saberMaisContent: any) => void;
+}
+
+const SaberMaisModal: React.FC<SaberMaisModalProps> = ({ isOpen, onClose, service, onSave }) => {
+  const [localSaberMaisContent, setLocalSaberMaisContent] = useState(() => service.saber_mais_content || { description: '', process: [], benefits: [] });
+  const [isSavingSaberMais, setIsSavingSaberMais] = useState(false);
+
+  useEffect(() => {
+    setLocalSaberMaisContent(service.saber_mais_content || { description: '', process: [], benefits: [] });
+  }, [service]);
+
+  if (!isOpen) return null;
+
+  const handleProcessChange = (index: number, value: string) => {
+    const updatedProcess = [...localSaberMaisContent.process];
+    updatedProcess[index] = value;
+    setLocalSaberMaisContent({ ...localSaberMaisContent, process: updatedProcess });
+  };
+
+  const handleAddProcessStep = () => {
+    setLocalSaberMaisContent({
+      ...localSaberMaisContent,
+      process: [...localSaberMaisContent.process, '']
+    });
+  };
+
+  const handleRemoveProcessStep = (index: number) => {
+    const updatedProcess = localSaberMaisContent.process.filter((_: any, i: number) => i !== index);
+    setLocalSaberMaisContent({ ...localSaberMaisContent, process: updatedProcess });
+  };
+
+  const handleBenefitsChange = (index: number, value: string) => {
+    const updatedBenefits = [...localSaberMaisContent.benefits];
+    updatedBenefits[index] = value;
+    setLocalSaberMaisContent({ ...localSaberMaisContent, benefits: updatedBenefits });
+  };
+
+  const handleAddBenefit = () => {
+    setLocalSaberMaisContent({
+      ...localSaberMaisContent,
+      benefits: [...localSaberMaisContent.benefits, '']
+    });
+  };
+
+  const handleRemoveBenefit = (index: number) => {
+    const updatedBenefits = localSaberMaisContent.benefits.filter((_: any, i: number) => i !== index);
+    setLocalSaberMaisContent({ ...localSaberMaisContent, benefits: updatedBenefits });
+  };
+
+  const onSaveContent = async () => {
+    setIsSavingSaberMais(true);
+    await onSave(service.id!, localSaberMaisContent);
+    setIsSavingSaberMais(false);
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto">
+      <div className="flex items-center justify-center min-h-screen px-4 py-8">
+        <div className="fixed inset-0 transition-opacity" aria-hidden="true">
+          <div className="absolute inset-0 bg-gray-500 opacity-75"></div>
+        </div>
+
+        <div className="relative bg-white rounded-lg shadow-xl overflow-hidden sm:max-w-lg sm:w-full">
+          <div className="px-4 py-5 sm:p-6">
+            <h3 className="text-lg font-medium leading-6 text-gray-900">
+              Editar "Saber Mais" - {service.name}
+            </h3>
+            <div className="mt-4 space-y-6">
+              <div>
+                <label htmlFor="modal-description" className="block text-sm font-medium text-gray-700">
+                  Descrição
+                </label>
+                <div className="mt-1">
+                  <textarea
+                    id="modal-description"
+                    rows={3}
+                    className="shadow-sm focus:ring-[#deb052] focus:border-[#deb052] block w-full sm:text-sm border-gray-300 rounded-md"
+                    placeholder="Descrição detalhada do serviço"
+                    value={localSaberMaisContent.description}
+                    onChange={(e) => setLocalSaberMaisContent({ ...localSaberMaisContent, description: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  Processo de Limpeza
+                </label>
+                <ul className="mt-2 space-y-2">
+                  {localSaberMaisContent.process.map((step: string, index: number) => (
+                    <li key={index} className="flex rounded-md shadow-sm">
+                      <span className="inline-flex items-center px-3 border border-r-0 border-gray-300 bg-gray-50 text-gray-500 sm:text-sm">
+                        {index + 1}
+                      </span>
+                      <input
+                        type="text"
+                        className="flex-1 focus:ring-[#deb052] focus:border-[#deb052] block w-full min-w-0 sm:text-sm border-gray-300 rounded-none rounded-r-md"
+                        placeholder={`Passo ${index + 1}`}
+                        value={step}
+                        onChange={(e) => handleProcessChange(index, e.target.value)}
+                      />
+                      <button
+                        onClick={() => handleRemoveProcessStep(index)}
+                        className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-500 rounded-r-md"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  type="button"
+                  onClick={handleAddProcessStep}
+                  className="mt-2 inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#deb052]"
+                >
+                  Adicionar Passo
+                </button>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  Benefícios
+                </label>
+                <ul className="mt-2 space-y-2">
+                  {localSaberMaisContent.benefits.map((benefit: string, index: number) => (
+                    <li key={index} className="flex rounded-md shadow-sm">
+                      <span className="inline-flex items-center px-3 border border-r-0 border-gray-300 bg-gray-50 text-gray-500 sm:text-sm">
+                        {index + 1}
+                      </span>
+                      <input
+                        type="text"
+                        className="flex-1 focus:ring-[#deb052] focus:border-[#deb052] block w-full min-w-0 sm:text-sm border-gray-300 rounded-none rounded-r-md"
+                        placeholder={`Benefício ${index + 1}`}
+                        value={benefit}
+                        onChange={(e) => handleBenefitsChange(index, e.target.value)}
+                      />
+                      <button
+                        onClick={() => handleRemoveBenefit(index)}
+                        className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-500 rounded-r-md"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  type="button"
+                  onClick={handleAddBenefit}
+                  className="mt-2 inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#deb052]"
+                >
+                  Adicionar Benefício
+                </button>
+              </div>
+            </div>
+          </div>
+          <div className="px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+            <button
+              type="button"
+              className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-[#deb052] text-base font-medium text-white hover:bg-[#c99a47] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#deb052] sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50"
+              onClick={onSaveContent}
+              disabled={isSavingSaberMais}
+            >
+              {isSavingSaberMais ? 'Salvando...' : 'Salvar'}
+            </button>
+            <button
+              type="button"
+              className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#deb052] sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+              onClick={onClose}
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
